@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minesweeper Web</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: linear-gradient(135deg, #f5f7fa, #e4ecf7);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 24px;
+    }
+    .app {
+      width: min(960px, 100%);
+      background: rgba(255,255,255,0.96);
+      border-radius: 20px;
+      box-shadow: 0 14px 40px rgba(0,0,0,0.12);
+      padding: 24px;
+    }
+    h1 {
+      margin: 0 0 16px;
+      text-align: center;
+      font-size: 32px;
+    }
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 18px;
+    }
+    .panel {
+      background: #f0f4f8;
+      border-radius: 14px;
+      padding: 10px 16px;
+      min-width: 140px;
+      text-align: center;
+      font-weight: bold;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+    button, select {
+      border: none;
+      border-radius: 12px;
+      padding: 10px 16px;
+      font-size: 16px;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+    }
+    button:hover { transform: translateY(-1px); }
+    #status {
+      text-align: center;
+      font-weight: bold;
+      min-height: 28px;
+      margin-bottom: 16px;
+    }
+    #board {
+      display: grid;
+      gap: 4px;
+      justify-content: center;
+      user-select: none;
+    }
+    .cell {
+      width: 44px;
+      height: 44px;
+      border: none;
+      border-radius: 10px;
+      background: #e7eaee;
+      font-size: 22px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.08s ease, background 0.15s ease;
+    }
+    .cell:hover { transform: scale(1.03); }
+    .cell.revealed {
+      background: #d6d6d6;
+      cursor: default;
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.12);
+    }
+    .cell.mine {
+      background: #ef5350;
+      color: #111;
+    }
+    .cell.flagged {
+      background: #ffd54f;
+      color: #111;
+    }
+    .legend {
+      margin-top: 14px;
+      text-align: center;
+      color: #555;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>💣 Minesweeper</h1>
+
+    <div class="topbar">
+      <div class="panel" id="timer">時間：0 秒</div>
+      <div class="panel" id="mineCount">地雷：10</div>
+      <div class="panel" id="flagCount">旗子：0</div>
+    </div>
+
+    <div class="controls">
+      <select id="difficulty">
+        <option value="easy">簡單 9x9 / 10 雷</option>
+        <option value="medium">普通 12x12 / 20 雷</option>
+        <option value="hard">困難 16x16 / 40 雷</option>
+      </select>
+      <button id="resetBtn">重新開始</button>
+      <button id="aiBtn">AI 下一步</button>
+      <button id="autoSolveBtn">AI 自動解</button>
+    </div>
+
+    <div id="status">遊戲開始，左鍵開格、右鍵插旗</div>
+    <div id="board"></div>
+    <div class="legend">左鍵：打開格子 ｜ 右鍵：插旗 ｜ AI 下一步：一次只做一步</div>
+  </div>
+
+  <script>
+    const COLORS = {
+      1: '#1976D2',
+      2: '#388E3C',
+      3: '#D32F2F',
+      4: '#7B1FA2',
+      5: '#6D4C41',
+      6: '#00838F',
+      7: '#455A64',
+      8: '#000000'
+    };
+
+    const DIFFICULTIES = {
+      easy: { rows: 9, cols: 9, mines: 10 },
+      medium: { rows: 12, cols: 12, mines: 20 },
+      hard: { rows: 16, cols: 16, mines: 40 }
+    };
+
+    let rows = 9;
+    let cols = 9;
+    let mineTotal = 10;
+    let board = [];
+    let revealed = new Set();
+    let flagged = new Set();
+    let gameOver = false;
+    let firstClick = true;
+    let timerRunning = false;
+    let timeElapsed = 0;
+    let timerId = null;
+    let autoSolveRunning = false;
+
+    const boardEl = document.getElementById('board');
+    const timerEl = document.getElementById('timer');
+    const mineCountEl = document.getElementById('mineCount');
+    const flagCountEl = document.getElementById('flagCount');
+    const statusEl = document.getElementById('status');
+    const resetBtn = document.getElementById('resetBtn');
+    const aiBtn = document.getElementById('aiBtn');
+    const autoSolveBtn = document.getElementById('autoSolveBtn');
+    const difficultyEl = document.getElementById('difficulty');
+
+    function key(r, c) {
+      return `${r},${c}`;
+    }
+
+    function parseKey(k) {
+      return k.split(',').map(Number);
+    }
+
+    function inBounds(r, c) {
+      return r >= 0 && r < rows && c >= 0 && c < cols;
+    }
+
+    function getNeighbors(r, c) {
+      const result = [];
+      for (let i = r - 1; i <= r + 1; i++) {
+        for (let j = c - 1; j <= c + 1; j++) {
+          if ((i !== r || j !== c) && inBounds(i, j)) {
+            result.push([i, j]);
+          }
+        }
+      }
+      return result;
+    }
+
+    function createEmptyBoard() {
+      board = Array.from({ length: rows }, () => Array(cols).fill(0));
+    }
+
+    function placeMines(safeR, safeC) {
+      let placed = 0;
+      while (placed < mineTotal) {
+        const r = Math.floor(Math.random() * rows);
+        const c = Math.floor(Math.random() * cols);
+        if ((r === safeR && c === safeC) || board[r][c] === -1) continue;
+        board[r][c] = -1;
+        placed++;
+      }
+    }
+
+    function calculateNumbers() {
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (board[r][c] === -1) continue;
+          let count = 0;
+          for (const [nr, nc] of getNeighbors(r, c)) {
+            if (board[nr][nc] === -1) count++;
+          }
+          board[r][c] = count;
+        }
+      }
+    }
+
+    function buildBoardUI() {
+      boardEl.innerHTML = '';
+      boardEl.style.gridTemplateColumns = `repeat(${cols}, 44px)`;
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const btn = document.createElement('button');
+          btn.className = 'cell';
+          btn.dataset.r = r;
+          btn.dataset.c = c;
+          btn.addEventListener('click', () => clickCell(r, c, true));
+          btn.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            rightClickCell(r, c);
+          });
+          boardEl.appendChild(btn);
+        }
+      }
+    }
+
+    function getCellElement(r, c) {
+      return boardEl.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+    }
+
+    function updateInfoPanels() {
+      timerEl.textContent = `時間：${timeElapsed} 秒`;
+      mineCountEl.textContent = `地雷：${mineTotal}`;
+      flagCountEl.textContent = `旗子：${flagged.size}`;
+    }
+
+    function updateBoardUI() {
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const el = getCellElement(r, c);
+          const k = key(r, c);
+          el.className = 'cell';
+          el.textContent = '';
+          el.style.color = '#111';
+
+          if (flagged.has(k) && !revealed.has(k)) {
+            el.classList.add('flagged');
+            el.textContent = '🚩';
+            continue;
+          }
+
+          if (revealed.has(k)) {
+            el.classList.add('revealed');
+            const val = board[r][c];
+
+            if (val === -1) {
+              el.classList.add('mine');
+              el.textContent = '💣';
+            } else if (val > 0) {
+              el.textContent = String(val);
+              el.style.color = COLORS[val] || '#111';
+            }
+          }
+        }
+      }
+      updateInfoPanels();
+    }
+
+    function startTimer() {
+      if (timerRunning) return;
+      timerRunning = true;
+      timerId = setInterval(() => {
+        timeElapsed += 1;
+        updateInfoPanels();
+      }, 1000);
+    }
+
+    function stopTimer() {
+      timerRunning = false;
+      if (timerId) {
+        clearInterval(timerId);
+        timerId = null;
+      }
+    }
+
+    function revealAllMines() {
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (board[r][c] === -1) {
+            revealed.add(key(r, c));
+          }
+        }
+      }
+    }
+
+    function checkWin() {
+      const safeCells = rows * cols - mineTotal;
+      if (revealed.size === safeCells && !gameOver) {
+        gameOver = true;
+        stopTimer();
+        revealAllMines();
+        updateBoardUI();
+        statusEl.textContent = '🎉 成功通關！';
+        setTimeout(() => {
+          alert(`🎉 YOU WIN！\n用時：${timeElapsed} 秒`);
+        }, 50);
+        return true;
+      }
+      return false;
+    }
+
+    function clickCell(r, c, user = true) {
+      if (gameOver) return;
+      const k = key(r, c);
+      if (revealed.has(k) || flagged.has(k)) return;
+
+      if (firstClick) {
+        placeMines(r, c);
+        calculateNumbers();
+        firstClick = false;
+        startTimer();
+      }
+
+      revealed.add(k);
+
+      if (board[r][c] === -1) {
+        gameOver = true;
+        stopTimer();
+        revealAllMines();
+        updateBoardUI();
+        statusEl.textContent = '💥 你踩到地雷了';
+        setTimeout(() => {
+          alert('💥 BOOM！你踩到地雷了！');
+        }, 50);
+        return;
+      }
+
+      if (board[r][c] === 0) {
+        for (const [nr, nc] of getNeighbors(r, c)) {
+          if (!revealed.has(key(nr, nc))) {
+            clickCell(nr, nc, false);
+          }
+        }
+      }
+
+      updateBoardUI();
+      checkWin();
+    }
+
+    function rightClickCell(r, c) {
+      if (gameOver) return;
+      const k = key(r, c);
+      if (revealed.has(k)) return;
+
+      if (flagged.has(k)) {
+        flagged.delete(k);
+        statusEl.textContent = `取消旗子：(${r}, ${c})`;
+      } else {
+        flagged.add(k);
+        statusEl.textContent = `插旗：(${r}, ${c})`;
+      }
+
+      updateBoardUI();
+      checkWin();
+    }
+
+    function inspectRevealedCell(r, c) {
+      const val = board[r][c];
+      if (val <= 0) return null;
+
+      const neighbors = getNeighbors(r, c);
+      const hidden = [];
+      let flagCount = 0;
+
+      for (const [nr, nc] of neighbors) {
+        const nk = key(nr, nc);
+        if (flagged.has(nk)) {
+          flagCount++;
+        } else if (!revealed.has(nk)) {
+          hidden.push([nr, nc]);
+        }
+      }
+
+      return { val, hidden, flagCount };
+    }
+
+
+    
+
+
+
+
+
+    function calcProbability() {
+        const prob = {};
+
+        // Step 1：計算全域基礎機率
+        // 剩餘地雷數 / 剩餘未開且未插旗格
+        let totalHidden = 0;
+        let totalFlagged = flagged.size;
+
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const k = key(r, c);
+
+            if (!revealed.has(k) && !flagged.has(k)) {
+              totalHidden++;
+            }
+          }
+        }
+
+        const minesLeft = mineTotal - totalFlagged;
+        const baseProbability = minesLeft / Math.max(totalHidden, 1);
+
+        // 先給每個未開格一個基礎機率
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const k = key(r, c);
+
+            if (!revealed.has(k) && !flagged.has(k)) {
+              prob[k] = baseProbability;
+            }
+          }
+        }
+
+        // Step 2：用已開數字格修正附近格子的機率
+        for (const cellKey of Array.from(revealed)) {
+          const [r, c] = parseKey(cellKey);
+          const val = board[r][c];
+
+          // 只有 1~8 的數字格才有推理價值
+          if (val <= 0) continue;
+
+          const neighbors = getNeighbors(r, c);
+
+          let hidden = [];
+          let flagCount = 0;
+
+          for (const [nr, nc] of neighbors) {
+            const nk = key(nr, nc);
+
+            if (flagged.has(nk)) {
+              flagCount++;
+            } else if (!revealed.has(nk)) {
+              hidden.push([nr, nc]);
+            }
+          }
+
+          // 如果沒有未開格，就跳過，避免除以 0
+          if (hidden.length === 0) continue;
+
+          // 防呆：如果旗子數超過數字，代表可能插錯旗，跳過這格
+          if (flagCount > val) continue;
+
+          // 局部機率 = 這個數字格附近剩餘地雷數 / 周圍未開格數
+          const remainingMines = val - flagCount;
+          const localProbability = remainingMines / hidden.length;
+
+          // Step 3：把全域機率和局部機率加權平均
+          for (const [nr, nc] of hidden) {
+            const nk = key(nr, nc);
+
+            prob[nk] = Math.min(
+              1,
+              Math.max(
+                0,
+                prob[nk] * 0.5 + localProbability * 0.5
+              )
+            );
+          }
+        }
+
+        return prob;
+      }
+
+
+    function aiMove() {
+      if (gameOver) {
+        statusEl.textContent = '遊戲已結束';
+        return;
+      }
+
+      for (const cellKey of Array.from(revealed)) {
+        const [r, c] = parseKey(cellKey);
+        const info = inspectRevealedCell(r, c);
+        if (!info) continue;
+
+        const { val, hidden, flagCount } = info;
+
+        //如果flag>val, 代表可能差錯旗子, 不使用這格推理
+        if (flagCount > val){
+          statusEl.textContent = `AI：偵測到可能錯旗 (${r}, ${c})，跳過此格`;
+          continue;
+        }
+
+        if (flagCount === val && hidden.length > 0) {
+          const [sr, sc] = hidden[0];
+          statusEl.textContent = `AI：找到安全格 (${sr}, ${sc})`;
+          clickCell(sr, sc, false);
+          return;
+        }
+
+        if (val - flagCount === hidden.length && hidden.length > 0) {
+          const [mr, mc] = hidden[0];
+          flagged.add(key(mr, mc));
+          updateBoardUI();
+          statusEl.textContent = `AI：判斷地雷，插旗 (${mr}, ${mc})`;
+          checkWin();
+          return;
+        }
+      }
+
+      const choices = [];
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const k = key(r, c);
+          if (!revealed.has(k) && !flagged.has(k)) {
+            choices.push([r, c]);
+          }
+        }
+      }
+
+      if (choices.length > 0) {
+        const prob = calcProbability();
+
+        let bestCell = null;
+        let bestProb = 1;
+
+        for (const [k, p] of Object.entries(prob)) {
+          if (!revealed.has(k) && !flagged.has(k) && p < bestProb) {
+            bestProb = p;
+            bestCell = parseKey(k);
+          }
+        }
+
+        if (bestCell) {
+          const [gr, gc] = bestCell;
+          const percent = Math.round(bestProb * 100);
+
+          statusEl.textContent = `AI：無法確定，選擇最低風險格 (${gr}, ${gc})，地雷機率約 ${percent}%`;
+          clickCell(gr, gc, false);
+        } else {
+          statusEl.textContent = 'AI：沒有可走步驟';
+        }
+      } else {
+        if (checkWin()) return;
+        statusEl.textContent = 'AI：無法推理，可能存在錯誤旗子或死局';
+      }
+      
+
+    }
+
+    function autoSolve() {
+      if (gameOver) return;
+      autoSolveRunning = !autoSolveRunning;
+      autoSolveBtn.textContent = autoSolveRunning ? '停止自動解' : 'AI 自動解';
+
+      if (!autoSolveRunning) {
+        statusEl.textContent = '已停止自動解';
+        return;
+      }
+
+      const loop = () => {
+        if (!autoSolveRunning || gameOver) {
+          autoSolveRunning = false;
+          autoSolveBtn.textContent = 'AI 自動解';
+          return;
+        }
+        aiMove();
+        setTimeout(loop, 180);
+      };
+
+      loop();
+    }
+
+    function resetGame() {
+      const difficulty = DIFFICULTIES[difficultyEl.value];
+      rows = difficulty.rows;
+      cols = difficulty.cols;
+      mineTotal = difficulty.mines;
+      revealed = new Set();
+      flagged = new Set();
+      gameOver = false;
+      firstClick = true;
+      autoSolveRunning = false;
+      autoSolveBtn.textContent = 'AI 自動解';
+      stopTimer();
+      timeElapsed = 0;
+      createEmptyBoard();
+      buildBoardUI();
+      updateBoardUI();
+      statusEl.textContent = '遊戲開始，左鍵開格、右鍵插旗';
+    }
+
+    resetBtn.addEventListener('click', resetGame);
+    aiBtn.addEventListener('click', aiMove);
+    autoSolveBtn.addEventListener('click', autoSolve);
+    difficultyEl.addEventListener('change', resetGame);
+
+    resetGame();
+  </script>
+</body>
+</html>
