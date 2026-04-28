@@ -128,7 +128,7 @@
 
     <div id="status">遊戲開始，左鍵開格、右鍵插旗</div>
     <div id="board"></div>
-    <div class="legend">左鍵：打開格子 ｜ 右鍵：插旗 ｜ AI 下一步：一次一步</div>
+    <div class="legend">左鍵：打開格子 ｜ 右鍵：插旗 ｜ AI 下一步：一次只做一步</div>
   </div>
 
   <script>
@@ -404,9 +404,99 @@
       return { val, hidden, flagCount };
     }
 
+
+    
+
+
+
+
+
+    function calcProbability() {
+        const prob = {};
+
+        // Step 1：計算全域基礎機率
+        // 剩餘地雷數 / 剩餘未開且未插旗格
+        let totalHidden = 0;
+        let totalFlagged = flagged.size;
+
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const k = key(r, c);
+
+            if (!revealed.has(k) && !flagged.has(k)) {
+              totalHidden++;
+            }
+          }
+        }
+
+        const minesLeft = mineTotal - totalFlagged;
+        const baseProbability = minesLeft / Math.max(totalHidden, 1);
+
+        // 先給每個未開格一個基礎機率
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const k = key(r, c);
+
+            if (!revealed.has(k) && !flagged.has(k)) {
+              prob[k] = baseProbability;
+            }
+          }
+        }
+
+        // Step 2：用已開數字格修正附近格子的機率
+        for (const cellKey of Array.from(revealed)) {
+          const [r, c] = parseKey(cellKey);
+          const val = board[r][c];
+
+          // 只有 1~8 的數字格才有推理價值
+          if (val <= 0) continue;
+
+          const neighbors = getNeighbors(r, c);
+
+          let hidden = [];
+          let flagCount = 0;
+
+          for (const [nr, nc] of neighbors) {
+            const nk = key(nr, nc);
+
+            if (flagged.has(nk)) {
+              flagCount++;
+            } else if (!revealed.has(nk)) {
+              hidden.push([nr, nc]);
+            }
+          }
+
+          // 如果沒有未開格，就跳過，避免除以 0
+          if (hidden.length === 0) continue;
+
+          // 防呆：如果旗子數超過數字，代表可能插錯旗，跳過這格
+          if (flagCount > val) continue;
+
+          // 局部機率 = 這個數字格附近剩餘地雷數 / 周圍未開格數
+          const remainingMines = val - flagCount;
+          const localProbability = remainingMines / hidden.length;
+
+          // Step 3：把全域機率和局部機率加權平均
+          for (const [nr, nc] of hidden) {
+            const nk = key(nr, nc);
+
+            prob[nk] = Math.min(
+              1,
+              Math.max(
+                0,
+                prob[nk] * 0.5 + localProbability * 0.5
+              )
+            );
+          }
+        }
+
+        return prob;
+      }
+
+
     function aiMove() {
       if (gameOver) {
-        statusEl.textContent = '遊戲結束';
+        statusEl.textContent = '遊戲已結束';
         return;
       }
 
@@ -416,6 +506,12 @@
         if (!info) continue;
 
         const { val, hidden, flagCount } = info;
+
+        //如果flag>val, 代表可能差錯旗子, 不使用這格推理
+        if (flagCount > val){
+          statusEl.textContent = `AI：偵測到可能錯旗 (${r}, ${c})，跳過此格`;
+          continue;
+        }
 
         if (flagCount === val && hidden.length > 0) {
           const [sr, sc] = hidden[0];
@@ -445,12 +541,33 @@
       }
 
       if (choices.length > 0) {
-        const [gr, gc] = choices[Math.floor(Math.random() * choices.length)];
-        statusEl.textContent = `AI：無法推理，隨機猜 (${gr}, ${gc})`;
-        clickCell(gr, gc, false);
+        const prob = calcProbability();
+
+        let bestCell = null;
+        let bestProb = 1;
+
+        for (const [k, p] of Object.entries(prob)) {
+          if (!revealed.has(k) && !flagged.has(k) && p < bestProb) {
+            bestProb = p;
+            bestCell = parseKey(k);
+          }
+        }
+
+        if (bestCell) {
+          const [gr, gc] = bestCell;
+          const percent = Math.round(bestProb * 100);
+
+          statusEl.textContent = `AI：無法確定，選擇最低風險格 (${gr}, ${gc})，地雷機率約 ${percent}%`;
+          clickCell(gr, gc, false);
+        } else {
+          statusEl.textContent = 'AI：沒有可走步驟';
+        }
       } else {
-        statusEl.textContent = 'AI：沒有可走步驟';
+        if (checkWin()) return;
+        statusEl.textContent = 'AI：無法推理，可能存在錯誤旗子或死局';
       }
+      
+
     }
 
     function autoSolve() {
@@ -466,7 +583,7 @@
       const loop = () => {
         if (!autoSolveRunning || gameOver) {
           autoSolveRunning = false;
-          autoSolveBtn.textContent = '自動解';
+          autoSolveBtn.textContent = 'AI 自動解';
           return;
         }
         aiMove();
@@ -486,13 +603,13 @@
       gameOver = false;
       firstClick = true;
       autoSolveRunning = false;
-      autoSolveBtn.textContent = 'AI 自動解';
+      autoSolveBtn.textContent = '自動解';
       stopTimer();
       timeElapsed = 0;
       createEmptyBoard();
       buildBoardUI();
       updateBoardUI();
-      statusEl.textContent = '左鍵開格、右鍵插旗';
+      statusEl.textContent = '遊戲開始，左鍵開格、右鍵插旗';
     }
 
     resetBtn.addEventListener('click', resetGame);
