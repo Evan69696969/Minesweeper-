@@ -128,7 +128,7 @@
 
     <div id="status">遊戲開始，左鍵開格、右鍵插旗</div>
     <div id="board"></div>
-    <div class="legend">左鍵：打開格子 ｜ 右鍵：插旗 ｜ AI 下一步：一次只做一步</div>
+    <div class="legend">左鍵：打開格子 ｜ 右鍵：插旗 ｜ AI 下一步：一次一步</div>
   </div>
 
   <script>
@@ -406,7 +406,7 @@
 
     function aiMove() {
       if (gameOver) {
-        statusEl.textContent = '遊戲已結束';
+        statusEl.textContent = '遊戲結束';
         return;
       }
 
@@ -466,7 +466,7 @@
       const loop = () => {
         if (!autoSolveRunning || gameOver) {
           autoSolveRunning = false;
-          autoSolveBtn.textContent = 'AI 自動解';
+          autoSolveBtn.textContent = '自動解';
           return;
         }
         aiMove();
