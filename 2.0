@@ -603,7 +603,7 @@
       gameOver = false;
       firstClick = true;
       autoSolveRunning = false;
-      autoSolveBtn.textContent = 'AI 自動解';
+      autoSolveBtn.textContent = '自動解';
       stopTimer();
       timeElapsed = 0;
       createEmptyBoard();
